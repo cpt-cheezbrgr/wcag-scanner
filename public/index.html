@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WCAG 2.1 AA Scanner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0; background: #f0f4f8; color: #2c3e50; line-height: 1.6;
+    }
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, #1a2940 0%, #2c4a72 100%);
+      color: #fff; padding: 24px 40px; display: flex; align-items: center; gap: 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+    .header-logo { font-size: 2rem; }
+    .header-text h1 { margin: 0; font-size: 1.5rem; font-weight: 700; }
+    .header-text p { margin: 4px 0 0; opacity: 0.75; font-size: 0.85rem; }
+    .deadline-badge {
+      margin-left: auto; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px; padding: 8px 16px; text-align: center; font-size: 0.8rem;
+    }
+    .deadline-badge strong { display: block; font-size: 1rem; }
+    .restart-btn {
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: #fff;
+      border-radius: 8px; padding: 8px 14px; font-size: 0.82rem; cursor: pointer;
+      transition: background 0.2s; white-space: nowrap;
+    }
+    .restart-btn:hover { background: rgba(255,255,255,0.2); }
+    .restart-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Layout */
+    .layout { display: grid; grid-template-columns: 380px 1fr; min-height: calc(100vh - 88px); }
+    .sidebar { background: #fff; border-right: 1px solid #e0e8f0; padding: 28px 24px; overflow-y: auto; }
+    .main { padding: 28px 32px; overflow-y: auto; }
+    /* Scan form */
+    .form-section h2 { margin: 0 0 20px; font-size: 1.1rem; color: #1a2940; }
+    .form-group { margin-bottom: 18px; }
+    .form-group label { display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 6px; color: #444; }
+    .form-group input[type="url"],
+    .form-group input[type="text"],
+    .form-group select {
+      width: 100%; padding: 10px 14px; border: 2px solid #d1dce8; border-radius: 8px;
+      font-size: 0.95rem; transition: border-color 0.2s; outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: #2980b9; }
+    .slider-container { display: flex; align-items: center; gap: 12px; }
+    .slider-container input[type="range"] { flex: 1; accent-color: #2980b9; }
+    .slider-value { font-weight: 700; color: #2980b9; min-width: 32px; text-align: right; }
+    .form-hint { font-size: 0.78rem; color: #888; margin-top: 4px; }
+    .advanced-toggle { background: none; border: none; color: #2980b9; cursor: pointer; font-size: 0.85rem; padding: 0; margin-bottom: 12px; }
+    .advanced-fields { display: none; }
+    .advanced-fields.open { display: block; }
+    .scan-btn {
+      width: 100%; padding: 14px; background: #2980b9; color: #fff;
+      border: none; border-radius: 8px; font-size: 1rem; font-weight: 700;
+      cursor: pointer; transition: background 0.2s, transform 0.1s;
+    }
+    .scan-btn:hover:not(:disabled) { background: #1f6fa8; }
+    .scan-btn:active:not(:disabled) { transform: scale(0.98); }
+    .scan-btn:disabled { background: #95a5a6; cursor: not-allowed; }
+    /* Divider */
+    .divider { border: none; border-top: 1px solid #e8eef4; margin: 24px 0; }
+    /* Past reports */
+    .past-section h2 { margin: 0 0 14px; font-size: 1rem; color: #1a2940; }
+    .past-list { list-style: none; margin: 0; padding: 0; }
+    .past-item {
+      border: 1px solid #e0e8f0; border-radius: 8px; padding: 12px 14px;
+      margin-bottom: 10px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .past-item:hover { border-color: #2980b9; box-shadow: 0 2px 8px rgba(41,128,185,0.1); }
+    .past-item-url { font-weight: 600; font-size: 0.88rem; color: #2c3e50; word-break: break-all; }
+    .past-item-meta { font-size: 0.78rem; color: #888; margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .past-item-score { font-weight: 700; }
+    /* Main area states */
+    .welcome-state { text-align: center; padding: 60px 20px; color: #888; }
+    .welcome-state .icon { font-size: 4rem; margin-bottom: 16px; }
+    .welcome-state h2 { color: #2c3e50; margin-bottom: 8px; }
+    /* Scanning state */
+    .scan-state { max-width: 700px; }
+    .scan-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .spinner {
+      width: 24px; height: 24px; border: 3px solid #e0e8f0; border-top-color: #2980b9;
+      border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .progress-bar.indeterminate {
+      width: 40% !important;
+      animation: slide 1.5s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0% { transform: translateX(-150%); }
+      100% { transform: translateX(350%); }
+    }
+    .scan-url { font-weight: 600; word-break: break-all; }
+    .progress-bar-wrap { background: #e8eef4; border-radius: 8px; overflow: hidden; height: 8px; margin-bottom: 20px; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, #2980b9, #27ae60); transition: width 0.3s; border-radius: 8px; }
+    .pages-log {
+      background: #1a2940; color: #ecf0f1; border-radius: 10px; padding: 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem;
+      max-height: 400px; overflow-y: auto; line-height: 1.8;
+    }
+    .log-entry { display: flex; gap: 12px; }
+    .log-entry .log-status { flex-shrink: 0; }
+    .log-entry.done-clean .log-status { color: #2ecc71; }
+    .log-entry.done-warn .log-status { color: #f39c12; }
+    .log-entry.done-err .log-status { color: #e74c3c; }
+    .log-entry.pending .log-status { color: #95a5a6; }
+    .log-url { color: #bdc3c7; word-break: break-all; }
+    .log-count { margin-left: auto; white-space: nowrap; }
+    .log-count.has-violations { color: #e74c3c; }
+    .log-count.clean { color: #2ecc71; }
+    /* Results state */
+    .results-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+    .results-title h2 { margin: 0; font-size: 1.4rem; }
+    .results-title p { margin: 4px 0 0; font-size: 0.88rem; color: #888; }
+    .results-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { padding: 9px 18px; border-radius: 8px; font-size: 0.88rem; font-weight: 600; cursor: pointer; border: none; transition: background 0.2s; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary { background: #2980b9; color: #fff; }
+    .btn-primary:hover { background: #1f6fa8; }
+    .btn-secondary { background: #ecf0f1; color: #2c3e50; }
+    .btn-secondary:hover { background: #dde4ea; }
+    /* Summary cards */
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .summary-card { background: #fff; border-radius: 10px; padding: 18px 14px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .summary-card .value { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .summary-card .label { font-size: 0.75rem; color: #888; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+    /* Violations */
+    .violations-section { background: #fff; border-radius: 10px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px; }
+    .violations-section h3 { margin: 0 0 16px; font-size: 1.1rem; display: flex; align-items: center; gap: 10px; }
+    .count-badge { background: #ecf0f1; color: #7f8c8d; font-size: 0.82rem; padding: 2px 10px; border-radius: 20px; font-weight: 600; }
+    .violation-row {
+      border: 1px solid #e8ecf0; border-radius: 8px; padding: 16px; margin-bottom: 12px;
+      border-left-width: 4px;
+    }
+    .violation-row.impact-critical { border-left-color: #c0392b; background: #fdf2f2; }
+    .violation-row.impact-serious { border-left-color: #e67e22; background: #fef9f0; }
+    .violation-row.impact-moderate { border-left-color: #f1c40f; background: #fffef0; }
+    .violation-row.impact-minor { border-left-color: #3498db; background: #f0f7ff; }
+    .violation-row.impact-heuristic { border-left-color: #9b59b6; }
+    .v-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .v-title { font-weight: 600; }
+    .badge { display: inline-block; color: #fff; font-size: 0.72rem; padding: 2px 8px; border-radius: 20px; font-weight: 700; text-transform: uppercase; }
+    .badge-critical { background: #c0392b; }
+    .badge-serious { background: #e67e22; }
+    .badge-moderate { background: #f1c40f; color: #333; }
+    .badge-minor { background: #3498db; }
+    .badge-heuristic { background: #9b59b6; }
+    .badge-review { background: #888; }
+    .wcag-tag { background: #e8ecf0; color: #555; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; }
+    .v-desc { color: #555; font-size: 0.88rem; margin-bottom: 8px; }
+    .v-fix { background: #f0f7f0; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; }
+    .v-pages { font-size: 0.8rem; color: #888; margin-top: 6px; }
+    .v-pages a { color: #2980b9; text-decoration: none; }
+    .v-pages a:hover { text-decoration: underline; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .filter-btn { background: #ecf0f1; border: none; border-radius: 20px; padding: 5px 14px; cursor: pointer; font-size: 0.82rem; transition: background 0.2s; }
+    .filter-btn.active, .filter-btn:hover { background: #2980b9; color: #fff; }
+    /* Loading empty state */
+    .empty-state { text-align: center; color: #aaa; padding: 32px; font-style: italic; }
+    /* Responsive */
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid #e0e8f0; }
+      .main { padding: 20px; }
+      .header { padding: 16px 20px; }
+      .deadline-badge { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="header" role="banner">
+  <div class="header-logo" aria-hidden="true">♿</div>
+  <div class="header-text">
+    <h1>WCAG 2.1 AA Scanner</h1>
+    <p>HHS Section 504 Accessibility Compliance Tool</p>
+  </div>
+  <div class="deadline-badge" role="complementary" aria-label="Compliance deadline">
+    <strong>May 11, 2026</strong>
+    Large recipient deadline
+  </div>
+  <button id="restart-btn" class="restart-btn" title="Restart server to apply code changes" aria-label="Restart server">
+    ↺ Restart Server
+  </button>
+</header>
+
+<div class="layout">
+  <!-- Sidebar: scan form + past reports -->
+  <aside class="sidebar" aria-label="Scan configuration">
+
+    <section class="form-section" aria-labelledby="scan-form-heading">
+      <h2 id="scan-form-heading">New Scan</h2>
+
+      <form id="scan-form" novalidate>
+        <div class="form-group">
+          <label for="url-input">Website URL</label>
+          <input type="url" id="url-input" placeholder="https://example.com" required autocomplete="url">
+        </div>
+
+        <div class="form-group">
+          <label for="depth-slider">Crawl Depth <span class="form-hint" style="font-weight:normal">(how deep to follow links)</span></label>
+          <div class="slider-container">
+            <input type="range" id="depth-slider" min="1" max="10" value="3" aria-valuemin="1" aria-valuemax="10">
+            <span class="slider-value" id="depth-value" aria-live="polite">3</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="pages-slider">Max Pages to Scan</label>
+          <div class="slider-container">
+            <input type="range" id="pages-slider" min="1" max="500" step="5" value="50" aria-valuemin="1" aria-valuemax="500">
+            <span class="slider-value" id="pages-value" aria-live="polite">50</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:0.85rem;font-weight:normal;cursor:pointer">
+            <input type="checkbox" id="all-pages-check"> Scan all pages (no limit)
+          </label>
+        </div>
+
+        <button type="button" class="advanced-toggle" id="advanced-toggle" aria-expanded="false" aria-controls="advanced-fields">
+          ▶ Advanced options
+        </button>
+        <div class="advanced-fields" id="advanced-fields" aria-hidden="true">
+          <div class="form-group">
+            <label for="include-pattern">Include URL Pattern (regex)</label>
+            <input type="text" id="include-pattern" placeholder="e.g. /patients|/services">
+            <div class="form-hint">Only crawl URLs matching this pattern</div>
+          </div>
+          <div class="form-group">
+            <label for="exclude-pattern">Exclude URL Pattern (regex)</label>
+            <input type="text" id="exclude-pattern" placeholder="e.g. /admin|/login">
+            <div class="form-hint">Skip URLs matching this pattern</div>
+          </div>
+          <div class="form-group">
+            <label for="robots-select">robots.txt</label>
+            <select id="robots-select">
+              <option value="true">Respect robots.txt (recommended)</option>
+              <option value="false">Ignore robots.txt</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="submit" class="scan-btn" id="scan-btn">
+          Start Accessibility Scan
+        </button>
+      </form>
+    </section>
+
+    <hr class="divider">
+
+    <section class="past-section" aria-labelledby="past-heading">
+      <h2 id="past-heading">Past Reports</h2>
+      <ul class="past-list" id="past-list" aria-label="Past scan reports">
+        <li class="empty-state" id="past-empty">Loading...</li>
+      </ul>
+    </section>
+
+  </aside>
+
+  <!-- Main content -->
+  <main class="main" id="main-content" aria-live="polite" aria-label="Scan results">
+
+    <!-- Welcome state (default) -->
+    <div class="welcome-state" id="welcome-state">
+      <div class="icon" aria-hidden="true">🔍</div>
+      <h2>Ready to Scan</h2>
+      <p>Enter a URL in the left panel to start a WCAG 2.1 AA accessibility audit.</p>
+      <p style="max-width:420px;margin:16px auto 0;font-size:0.88rem;color:#aaa">
+        The scanner checks for violations using axe-core plus custom heuristics, and generates
+        an actionable report with remediation guidance.
+      </p>
+    </div>
+
+    <!-- Scanning state -->
+    <div class="scan-state" id="scan-state" hidden>
+      <div class="scan-header">
+        <div class="spinner" role="status" aria-label="Scanning in progress"></div>
+        <div>
+          <div style="font-size:0.82rem;color:#888;text-transform:uppercase;letter-spacing:0.05em">Scanning</div>
+          <div class="scan-url" id="scan-url-display"></div>
+        </div>
+      </div>
+      <div class="progress-bar-wrap" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:0.82rem;color:#888;margin-bottom:16px">
+        <span id="pages-status">0 pages scanned</span>
+        <span id="current-url-status"></span>
+      </div>
+      <div class="pages-log" id="pages-log" aria-label="Scan progress log" role="log"></div>
+    </div>
+
+    <!-- Results state -->
+    <div id="results-state" hidden>
+      <div class="results-header">
+        <div class="results-title">
+          <h2 id="results-title">Scan Results</h2>
+          <p id="results-meta"></p>
+        </div>
+        <div class="results-actions">
+          <a id="html-report-link" class="btn btn-primary" target="_blank" rel="noopener" hidden>📄 Full HTML Report</a>
+          <a id="json-report-link" class="btn btn-secondary" target="_blank" rel="noopener" hidden>⬇ JSON Data</a>
+        </div>
+      </div>
+
+      <div class="summary-grid" id="summary-grid"></div>
+
+      <div class="violations-section" id="automated-violations-section">
+        <h3>Automated Violations <span class="count-badge" id="violations-count-badge">0</span></h3>
+        <div class="filter-bar" id="filter-bar"></div>
+        <div id="violations-list"></div>
+      </div>
+
+      <div class="violations-section" id="heuristics-section">
+        <h3>Heuristic & Structural Issues <span class="count-badge" id="heuristics-count-badge">0</span></h3>
+        <div id="heuristics-list"></div>
+      </div>
+
+      <div class="violations-section" id="incomplete-section">
+        <h3>Needs Manual Review — axe flagged <span class="count-badge" id="incomplete-count-badge">0</span></h3>
+        <div id="incomplete-list"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

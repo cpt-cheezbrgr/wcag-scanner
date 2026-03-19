@@ -1,0 +1,25 @@
+{
+  "name": "wcag-scanner",
+  "version": "1.0.0",
+  "description": "WCAG 2.1 AA accessibility compliance scanner for websites — CLI + Web UI",
+  "type": "module",
+  "bin": {
+    "wcag-scan": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node scripts/start.js",
+    "scan": "node src/cli.js"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "chalk": "^5.4.1",
+    "commander": "^12.1.0",
+    "express": "^4.21.2",
+    "ora": "^8.1.1",
+    "playwright": "^1.50.1",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
