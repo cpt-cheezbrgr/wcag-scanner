@@ -408,9 +408,11 @@ async function runHeuristicChecks(page, url) {
  * Scan a single page for WCAG 2.1 AA violations.
  * @param {string} url
  * @param {object} browser - Playwright browser instance (reuse across pages)
- * @returns {object} scan result for this page
+ * @param {object} [options]
+ * @param {string} [options.origin] - If set, extract same-origin links from the page
+ * @returns {object} scan result for this page (includes extractedLinks if origin provided)
  */
-export async function scanPage(url, browser) {
+export async function scanPage(url, browser, options = {}) {
   const context = await browser.newContext({
     userAgent: 'WCAG-Scanner/1.0 (Accessibility Audit Tool)',
     viewport: { width: 1280, height: 800 },
@@ -421,10 +423,28 @@ export async function scanPage(url, browser) {
   let heuristicResults = [];
   let pageTitle = '';
   let error = null;
+  let extractedLinks = [];
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    // Use 'load' rather than 'networkidle' — sites with analytics/chat widgets/SSE
+    // never reach networkidle, causing a 30s timeout that silently drops all links.
+    await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+
+    // For JS-heavy SPAs, give scripts a moment to render nav links
+    await page.waitForTimeout(500);
+
     pageTitle = await page.title();
+
+    // Extract same-origin links while the page is already loaded (no second navigation needed)
+    if (options.origin) {
+      extractedLinks = await page.evaluate((origin) => {
+        return Array.from(document.querySelectorAll('a[href]'))
+          .map(a => a.href)
+          .filter(href => {
+            try { return new URL(href).origin === origin; } catch { return false; }
+          });
+      }, options.origin);
+    }
 
     // Run axe-core with all WCAG 2.1 A + AA tags
     axeResults = await new AxeBuilder({ page })
@@ -453,6 +473,7 @@ export async function scanPage(url, browser) {
         }
       : null,
     heuristics: heuristicResults,
+    extractedLinks,
   };
 }
 

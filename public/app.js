@@ -399,6 +399,7 @@ async function loadPastReports() {
           ${r.totalPages != null ? `<span>${r.totalPages} pages</span>` : ''}
           ${r.totalViolations != null ? `<span style="color:${r.totalViolations > 0 ? '#c0392b' : '#27ae60'}">${r.totalViolations} violations</span>` : ''}
           ${r.complianceScore != null ? `<span class="past-item-score" style="color:${r.complianceScore >= 80 ? '#27ae60' : r.complianceScore >= 60 ? '#e67e22' : '#c0392b'}">${r.complianceScore}% score</span>` : ''}
+          <button class="past-item-delete" data-filename="${escHtml(r.filename)}" title="Delete this report" aria-label="Delete report for ${escHtml(r.startUrl || r.filename)}">🗑</button>
         </div>
       </li>
     `).join('');
@@ -407,6 +408,26 @@ async function loadPastReports() {
       const open = () => loadReport(item.dataset.filename);
       item.addEventListener('click', open);
       item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') open(); });
+    });
+
+    pastList.querySelectorAll('.past-item-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // don't trigger the load-report click
+        const filename = btn.dataset.filename;
+        if (!confirm(`Delete this report?\n\n${filename}\n\nThis cannot be undone.`)) return;
+
+        try {
+          const resp = await fetch(`/api/reports/${filename}`, { method: 'DELETE' });
+          if (!resp.ok) throw new Error((await resp.json()).error);
+          // Remove the list item from the DOM immediately
+          btn.closest('li').remove();
+          if (pastList.querySelectorAll('.past-item').length === 0) {
+            pastList.innerHTML = '<li class="empty-state">No past reports yet.</li>';
+          }
+        } catch (err) {
+          alert(`Could not delete report: ${err.message}`);
+        }
+      });
     });
   } catch {
     pastList.innerHTML = '<li class="empty-state">Could not load past reports.</li>';

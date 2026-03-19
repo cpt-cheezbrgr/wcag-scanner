@@ -6,7 +6,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdirSync, writeFileSync, readdirSync, readFileSync, statSync } from 'fs';
+import { mkdirSync, writeFileSync, readdirSync, readFileSync, statSync, unlinkSync, existsSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { createBrowser, scanPage } from './scanner.js';
 import { Crawler } from './crawler.js';
@@ -218,6 +218,25 @@ app.get('/api/reports/:filename', (req, res) => {
     res.type('json').send(data);
   } catch {
     res.status(404).json({ error: 'Report not found' });
+  }
+});
+
+// DELETE /api/reports/:filename — delete a report (removes both JSON and HTML files)
+app.delete('/api/reports/:filename', (req, res) => {
+  const filename = req.params.filename.replace(/[^a-z0-9_\-.]/gi, '');
+  if (!filename.endsWith('.json')) return res.status(400).json({ error: 'JSON files only' });
+
+  const jsonPath = join(REPORTS_DIR, filename);
+  const htmlPath = join(REPORTS_DIR, filename.replace('.json', '.html'));
+
+  if (!existsSync(jsonPath)) return res.status(404).json({ error: 'Report not found' });
+
+  try {
+    unlinkSync(jsonPath);
+    if (existsSync(htmlPath)) unlinkSync(htmlPath);
+    res.json({ deleted: filename });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

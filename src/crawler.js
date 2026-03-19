@@ -110,8 +110,10 @@ export class Crawler extends EventEmitter {
 
   /**
    * Main crawl loop. Accepts a Playwright browser instance and a scan function.
+   * scanFn signature: async (url, browser, options) => pageResult
+   * pageResult must include extractedLinks[] when options.origin is passed.
    * @param {string} startUrl
-   * @param {Function} scanFn - async (url, browser) => pageResult
+   * @param {Function} scanFn
    * @param {object} browser - Playwright browser
    * @returns {Array} all page results
    */
@@ -126,36 +128,18 @@ export class Crawler extends EventEmitter {
     this.visited.add(normalizedStart);
 
     const results = [];
+    // In unlimited mode treat depth as effectively infinite
+    const effectiveMaxDepth = this.maxPages === 0 ? Infinity : this.maxDepth;
 
     while (this.queue.length > 0 && (this.maxPages === 0 || results.length < this.maxPages)) {
       const { url, depth } = this.queue.shift();
 
       this.emit('page:start', { url, depth, index: results.length + 1, total: this.visited.size });
 
-      // We need a page to extract links; reuse the scanner's browser context
-      const context = await browser.newContext({
-        userAgent: 'WCAG-Scanner/1.0 (Accessibility Audit Tool)',
-        viewport: { width: 1280, height: 800 },
-      });
-      const page = await context.newPage();
-
-      let pageResult;
-      let newLinks = [];
-
-      try {
-        // Navigate (scanner will do it again internally, but we need links)
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-        if (depth < this.maxDepth) {
-          newLinks = await this.extractLinks(page, url);
-        }
-      } catch (err) {
-        // Navigation failed — still run the scanner which handles its own error
-      } finally {
-        await context.close();
-      }
-
-      // Run the full accessibility scan
-      pageResult = await scanFn(url, browser);
+      // Run the accessibility scan. Also extract links from the same page load
+      // (no separate navigation — avoids double-load and networkidle timeout issues).
+      const shouldExtract = depth < effectiveMaxDepth;
+      const pageResult = await scanFn(url, browser, { origin: shouldExtract ? origin : null });
       results.push(pageResult);
 
       this.emit('page:done', {
@@ -167,11 +151,15 @@ export class Crawler extends EventEmitter {
         error: pageResult.error,
       });
 
-      // Enqueue discovered links
-      for (const link of newLinks) {
-        if (!this.visited.has(link) && (this.maxPages === 0 || this.visited.size < this.maxPages * 2)) {
-          this.visited.add(link);
-          this.queue.push({ url: link, depth: depth + 1 });
+      // Enqueue newly discovered internal links
+      if (shouldExtract && pageResult.extractedLinks?.length) {
+        for (const rawLink of pageResult.extractedLinks) {
+          const normalized = this.normalizeUrl(rawLink, url);
+          if (!normalized) continue;
+          if (!this.shouldCrawl(normalized, origin)) continue;
+          if (this.visited.has(normalized)) continue;
+          this.visited.add(normalized);
+          this.queue.push({ url: normalized, depth: depth + 1 });
         }
       }
     }
