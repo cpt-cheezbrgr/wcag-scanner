@@ -74,10 +74,33 @@ app.post('/api/scan', async (req, res) => {
     const jsonPath = join(REPORTS_DIR, `${baseName}.json`);
     const htmlPath = join(REPORTS_DIR, `${baseName}.html`);
 
-    // Accumulate page results here so we can checkpoint after each page
+    // Accumulate page results here so we can checkpoint after each page.
+    // We strip axe pass nodes and extractedLinks before storing — these are
+    // the primary source of file size bloat (233MB+ for large sites) and are
+    // not needed in reports (only pass IDs and counts are used).
     const partialResults = [];
 
-    // Write current partial results to disk immediately (survives crashes/restarts)
+    function trimResult(result) {
+      return {
+        url: result.url,
+        pageTitle: result.pageTitle,
+        scannedAt: result.scannedAt,
+        error: result.error,
+        heuristics: result.heuristics,
+        // Keep violations in full — they're shown in the report
+        axe: result.axe ? {
+          violations: result.axe.violations,
+          incomplete: result.axe.incomplete,
+          // Strip pass node details — reporter only needs IDs and count
+          passes: (result.axe.passes || []).map(p => ({ id: p.id, tags: p.tags })),
+        } : null,
+        // extractedLinks are used during crawl only, not stored in reports
+      };
+    }
+
+    // Write checkpoint every 10 pages to disk (survives crashes/restarts).
+    // Checkpoints are trimmed so they stay small even for large sites.
+    let checkpointDirty = false;
     const writeCheckpoint = (status = 'in-progress', errorMsg = null) => {
       try {
         const partial = {
@@ -92,6 +115,7 @@ app.post('/api/scan', async (req, res) => {
           pages: partialResults,
         };
         writeFileSync(jsonPath, JSON.stringify(partial, null, 2));
+        checkpointDirty = false;
       } catch { /* non-fatal */ }
     };
 
@@ -126,16 +150,23 @@ app.post('/api/scan', async (req, res) => {
         });
       });
 
-      // Wrap scanPage so we checkpoint to disk after every page completes
+      // Wrap scanPage: trim and store each result, checkpoint every 10 pages
       const scanPageWithCheckpoint = async (pageUrl, browser, options) => {
         const result = await scanPage(pageUrl, browser, options);
-        partialResults.push(result);
-        writeCheckpoint();
+        partialResults.push(trimResult(result));
+        checkpointDirty = true;
+        if (partialResults.length % 10 === 0) writeCheckpoint();
+        // Return original result (with extractedLinks) so the crawler can use it
         return result;
       };
 
-      const allResults = await crawler.crawl(url, scanPageWithCheckpoint, browser);
-      const aggregated = aggregateResults(allResults);
+      await crawler.crawl(url, scanPageWithCheckpoint, browser);
+
+      // Write any remaining pages that haven't been checkpointed yet
+      if (checkpointDirty) writeCheckpoint();
+
+      // Aggregate using the already-trimmed results (passes only have id+tags, no nodes)
+      const aggregated = aggregateResults(partialResults);
 
       // Finalize: overwrite checkpoint JSON with complete aggregated report
       const savedReports = [];
@@ -162,7 +193,7 @@ app.post('/api/scan', async (req, res) => {
     } catch (err) {
       job.status = 'error';
       job.error = err.message;
-      // Leave the partial checkpoint on disk but mark it as interrupted
+      // Flush any un-checkpointed pages, then mark as interrupted
       writeCheckpoint('interrupted', err.message);
       broadcast(jobId, 'error', { message: err.message });
     } finally {
