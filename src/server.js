@@ -66,6 +66,38 @@ app.post('/api/scan', async (req, res) => {
   // Run scan asynchronously
   (async () => {
     let browser;
+
+    // Generate file paths upfront so checkpoints can be written incrementally
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').substring(0, 19);
+    const safeDomain = new URL(url).hostname.replace(/[^a-z0-9]/gi, '_');
+    const baseName = `${safeDomain}_${timestamp}`;
+    const jsonPath = join(REPORTS_DIR, `${baseName}.json`);
+    const htmlPath = join(REPORTS_DIR, `${baseName}.html`);
+
+    // Accumulate page results here so we can checkpoint after each page
+    const partialResults = [];
+
+    // Write current partial results to disk immediately (survives crashes/restarts)
+    const writeCheckpoint = (status = 'in-progress', errorMsg = null) => {
+      try {
+        const partial = {
+          startUrl: url,
+          status,
+          startedAt: job.startedAt,
+          ...(errorMsg ? { error: errorMsg } : {}),
+          summary: {
+            totalPages: partialResults.length,
+            scannedAt: job.startedAt,
+          },
+          pages: partialResults,
+        };
+        writeFileSync(jsonPath, JSON.stringify(partial, null, 2));
+      } catch { /* non-fatal */ }
+    };
+
+    // Write an initial checkpoint so the file exists immediately when the scan starts
+    writeCheckpoint();
+
     try {
       browser = await createBrowser(true);
 
@@ -94,22 +126,25 @@ app.post('/api/scan', async (req, res) => {
         });
       });
 
-      const allResults = await crawler.crawl(url, scanPage, browser);
+      // Wrap scanPage so we checkpoint to disk after every page completes
+      const scanPageWithCheckpoint = async (pageUrl, browser, options) => {
+        const result = await scanPage(pageUrl, browser, options);
+        partialResults.push(result);
+        writeCheckpoint();
+        return result;
+      };
+
+      const allResults = await crawler.crawl(url, scanPageWithCheckpoint, browser);
       const aggregated = aggregateResults(allResults);
 
-      // Save reports
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').substring(0, 19);
-      const safeDomain = new URL(url).hostname.replace(/[^a-z0-9]/gi, '_');
-      const baseName = `${safeDomain}_${timestamp}`;
+      // Finalize: overwrite checkpoint JSON with complete aggregated report
       const savedReports = [];
 
       if (format === 'html' || format === 'both') {
-        const htmlPath = join(REPORTS_DIR, `${baseName}.html`);
         writeFileSync(htmlPath, generateHtmlReport(aggregated, url));
         savedReports.push({ type: 'html', filename: `${baseName}.html`, path: htmlPath });
       }
 
-      const jsonPath = join(REPORTS_DIR, `${baseName}.json`);
       writeFileSync(jsonPath, generateJsonReport(aggregated, url));
       savedReports.push({ type: 'json', filename: `${baseName}.json`, path: jsonPath });
 
@@ -127,6 +162,8 @@ app.post('/api/scan', async (req, res) => {
     } catch (err) {
       job.status = 'error';
       job.error = err.message;
+      // Leave the partial checkpoint on disk but mark it as interrupted
+      writeCheckpoint('interrupted', err.message);
       broadcast(jobId, 'error', { message: err.message });
     } finally {
       if (browser) await browser.close();
@@ -191,14 +228,15 @@ app.get('/api/reports', (req, res) => {
           return {
             filename: f,
             startUrl: data.startUrl,
-            scannedAt: data.summary?.scannedAt,
+            scannedAt: data.summary?.scannedAt || data.startedAt,
             totalPages: data.summary?.totalPages,
             totalViolations: data.summary?.totalViolations,
             complianceScore: data.summary?.complianceScore,
+            status: data.status || 'completed',
             size: stat.size,
           };
         } catch {
-          return { filename: f, scannedAt: stat.mtime.toISOString() };
+          return { filename: f, scannedAt: stat.mtime.toISOString(), status: 'completed' };
         }
       })
       .sort((a, b) => new Date(b.scannedAt) - new Date(a.scannedAt));

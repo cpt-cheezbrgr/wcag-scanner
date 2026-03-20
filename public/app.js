@@ -390,19 +390,27 @@ async function loadPastReports() {
       pastList.innerHTML = '<li class="empty-state">No past reports yet.</li>';
       return;
     }
-    pastList.innerHTML = reports.map(r => `
-      <li class="past-item" tabindex="0" role="button" data-filename="${escHtml(r.filename)}"
+    pastList.innerHTML = reports.map(r => {
+      const isPartial = r.status === 'in-progress' || r.status === 'interrupted';
+      const statusBadge = r.status === 'in-progress'
+        ? '<span class="past-status-badge badge-inprogress">in-progress</span>'
+        : r.status === 'interrupted'
+        ? '<span class="past-status-badge badge-interrupted">partial</span>'
+        : '';
+      return `
+      <li class="past-item${isPartial ? ' past-item-partial' : ''}" tabindex="0" role="button" data-filename="${escHtml(r.filename)}"
           aria-label="View report for ${escHtml(r.startUrl || r.filename)}">
-        <div class="past-item-url">${escHtml(r.startUrl || r.filename)}</div>
+        <div class="past-item-url">${escHtml(r.startUrl || r.filename)} ${statusBadge}</div>
         <div class="past-item-meta">
           <span>${r.scannedAt ? new Date(r.scannedAt).toLocaleDateString() : ''}</span>
-          ${r.totalPages != null ? `<span>${r.totalPages} pages</span>` : ''}
-          ${r.totalViolations != null ? `<span style="color:${r.totalViolations > 0 ? '#c0392b' : '#27ae60'}">${r.totalViolations} violations</span>` : ''}
-          ${r.complianceScore != null ? `<span class="past-item-score" style="color:${r.complianceScore >= 80 ? '#27ae60' : r.complianceScore >= 60 ? '#e67e22' : '#c0392b'}">${r.complianceScore}% score</span>` : ''}
+          ${r.totalPages != null ? `<span>${r.totalPages} pages${isPartial ? ' so far' : ''}</span>` : ''}
+          ${!isPartial && r.totalViolations != null ? `<span style="color:${r.totalViolations > 0 ? '#c0392b' : '#27ae60'}">${r.totalViolations} violations</span>` : ''}
+          ${!isPartial && r.complianceScore != null ? `<span class="past-item-score" style="color:${r.complianceScore >= 80 ? '#27ae60' : r.complianceScore >= 60 ? '#e67e22' : '#c0392b'}">${r.complianceScore}% score</span>` : ''}
           <button class="past-item-delete" data-filename="${escHtml(r.filename)}" title="Delete this report" aria-label="Delete report for ${escHtml(r.startUrl || r.filename)}">🗑</button>
         </div>
       </li>
-    `).join('');
+    `;
+    }).join('');
 
     pastList.querySelectorAll('.past-item').forEach(item => {
       const open = () => loadReport(item.dataset.filename);
