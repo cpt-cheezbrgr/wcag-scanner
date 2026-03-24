@@ -19,6 +19,27 @@ const REPORTS_DIR = join(ROOT, 'reports');
 
 mkdirSync(REPORTS_DIR, { recursive: true });
 
+/**
+ * Strip axe pass node details and extractedLinks from a page result before saving.
+ * This prevents report files from ballooning to 200-500MB for large sites.
+ * The reporter only needs pass rule IDs (not full node HTML) and violation details.
+ */
+function trimResult(result) {
+  return {
+    url: result.url,
+    pageTitle: result.pageTitle,
+    scannedAt: result.scannedAt,
+    error: result.error,
+    heuristics: result.heuristics,
+    axe: result.axe ? {
+      violations: result.axe.violations,
+      incomplete: result.axe.incomplete,
+      passes: (result.axe.passes || []).map(p => ({ id: p.id, tags: p.tags })),
+    } : null,
+    // extractedLinks used during crawl only — not stored in reports
+  };
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.static(PUBLIC_DIR));
@@ -74,58 +95,56 @@ app.post('/api/scan', async (req, res) => {
     const jsonPath = join(REPORTS_DIR, `${baseName}.json`);
     const htmlPath = join(REPORTS_DIR, `${baseName}.html`);
 
-    // Accumulate page results here so we can checkpoint after each page.
-    // We strip axe pass nodes and extractedLinks before storing — these are
-    // the primary source of file size bloat (233MB+ for large sites) and are
-    // not needed in reports (only pass IDs and counts are used).
+    // Accumulate trimmed page results for checkpointing and final report
     const partialResults = [];
 
-    function trimResult(result) {
-      return {
-        url: result.url,
-        pageTitle: result.pageTitle,
-        scannedAt: result.scannedAt,
-        error: result.error,
-        heuristics: result.heuristics,
-        // Keep violations in full — they're shown in the report
-        axe: result.axe ? {
-          violations: result.axe.violations,
-          incomplete: result.axe.incomplete,
-          // Strip pass node details — reporter only needs IDs and count
-          passes: (result.axe.passes || []).map(p => ({ id: p.id, tags: p.tags })),
-        } : null,
-        // extractedLinks are used during crawl only, not stored in reports
-      };
-    }
+    // Small metadata sidecar — written alongside the main JSON so the sidebar
+    // can read it instantly without loading the full (potentially 500MB) file.
+    const writeMeta = (status, errorMsg = null) => {
+      try {
+        const meta = {
+          startUrl: url,
+          status,
+          startedAt: job.startedAt,
+          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
+          ...(errorMsg ? { error: errorMsg } : {}),
+          summary: { totalPages: partialResults.length, scannedAt: job.startedAt },
+          pendingUrlsCount: crawlerRef ? crawlerRef.queue.length : 0,
+        };
+        writeFileSync(jsonPath.replace('.json', '.meta.json'), JSON.stringify(meta));
+      } catch { /* non-fatal */ }
+    };
 
     // Write checkpoint every 10 pages to disk (survives crashes/restarts).
-    // Checkpoints are trimmed so they stay small even for large sites.
     let checkpointDirty = false;
+    let crawlerRef = null; // set after crawler is created
     const writeCheckpoint = (status = 'in-progress', errorMsg = null) => {
       try {
         const partial = {
           startUrl: url,
           status,
           startedAt: job.startedAt,
+          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
           ...(errorMsg ? { error: errorMsg } : {}),
-          summary: {
-            totalPages: partialResults.length,
-            scannedAt: job.startedAt,
-          },
+          summary: { totalPages: partialResults.length, scannedAt: job.startedAt },
+          // Save the queue so the scan can be resumed from this exact point
+          pendingUrls: crawlerRef ? crawlerRef.queue.map(i => i.url) : [],
           pages: partialResults,
         };
         writeFileSync(jsonPath, JSON.stringify(partial, null, 2));
+        writeMeta(status, errorMsg);
         checkpointDirty = false;
       } catch { /* non-fatal */ }
     };
 
-    // Write an initial checkpoint so the file exists immediately when the scan starts
+    // Write an initial checkpoint + meta so the file exists immediately
     writeCheckpoint();
 
     try {
       browser = await createBrowser(true);
 
       const crawler = new Crawler({ maxDepth, maxPages, respectRobots, includePattern, excludePattern });
+      crawlerRef = crawler;
 
       crawler.on('page:start', ({ url: pageUrl, index }) => {
         job.progress.currentUrl = pageUrl;
@@ -250,12 +269,17 @@ app.get('/api/job/:jobId', (req, res) => {
 app.get('/api/reports', (req, res) => {
   try {
     const files = readdirSync(REPORTS_DIR)
-      .filter(f => f.endsWith('.json'))
+      .filter(f => f.endsWith('.json') && !f.endsWith('.meta.json'))
       .map(f => {
         const filePath = join(REPORTS_DIR, f);
         const stat = statSync(filePath);
+        const metaPath = filePath.replace('.json', '.meta.json');
+        const htmlPath = filePath.replace('.json', '.html');
         try {
-          const data = JSON.parse(readFileSync(filePath, 'utf-8'));
+          // Prefer the small .meta.json sidecar — avoids reading 200-500MB report files
+          const data = existsSync(metaPath)
+            ? JSON.parse(readFileSync(metaPath, 'utf-8'))
+            : JSON.parse(readFileSync(filePath, 'utf-8'));
           return {
             filename: f,
             startUrl: data.startUrl,
@@ -264,10 +288,12 @@ app.get('/api/reports', (req, res) => {
             totalViolations: data.summary?.totalViolations,
             complianceScore: data.summary?.complianceScore,
             status: data.status || 'completed',
+            hasHtml: existsSync(htmlPath),
+            pendingUrlsCount: data.pendingUrlsCount ?? (data.pendingUrls?.length ?? 0),
             size: stat.size,
           };
         } catch {
-          return { filename: f, scannedAt: stat.mtime.toISOString(), status: 'completed' };
+          return { filename: f, scannedAt: stat.mtime.toISOString(), status: 'completed', hasHtml: existsSync(htmlPath) };
         }
       })
       .sort((a, b) => new Date(b.scannedAt) - new Date(a.scannedAt));
@@ -290,6 +316,229 @@ app.get('/api/reports/:filename', (req, res) => {
   }
 });
 
+// POST /api/reports/:filename/finalize — generate HTML report from a partial checkpoint
+app.post('/api/reports/:filename/finalize', async (req, res) => {
+  const filename = req.params.filename.replace(/[^a-z0-9_\-.]/gi, '');
+  if (!filename.endsWith('.json')) return res.status(400).json({ error: 'JSON files only' });
+
+  const jsonPath = join(REPORTS_DIR, filename);
+  if (!existsSync(jsonPath)) return res.status(404).json({ error: 'Report not found' });
+
+  try {
+    const data = JSON.parse(readFileSync(jsonPath, 'utf-8'));
+    if (!data.pages || data.pages.length === 0) {
+      return res.status(400).json({ error: 'No page data in checkpoint' });
+    }
+
+    const aggregated = aggregateResults(data.pages);
+    const htmlPath = jsonPath.replace('.json', '.html');
+    const metaPath = jsonPath.replace('.json', '.meta.json');
+
+    writeFileSync(htmlPath, generateHtmlReport(aggregated, data.startUrl));
+
+    // Update checkpoint status to completed and add aggregated summary
+    data.status = 'completed';
+    data.summary = aggregated.summary;
+    writeFileSync(jsonPath, JSON.stringify(data, null, 2));
+
+    // Update meta sidecar
+    if (existsSync(metaPath)) {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+      meta.status = 'completed';
+      meta.summary = aggregated.summary;
+      writeFileSync(metaPath, JSON.stringify(meta));
+    }
+
+    res.json({
+      success: true,
+      htmlFilename: filename.replace('.json', '.html'),
+      summary: aggregated.summary,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/reports/:filename/resume — resume an interrupted scan from its checkpoint
+app.post('/api/reports/:filename/resume', async (req, res) => {
+  const filename = req.params.filename.replace(/[^a-z0-9_\-.]/gi, '');
+  if (!filename.endsWith('.json')) return res.status(400).json({ error: 'JSON files only' });
+
+  const existingPath = join(REPORTS_DIR, filename);
+  if (!existsSync(existingPath)) return res.status(404).json({ error: 'Report not found' });
+
+  let checkpoint;
+  try {
+    checkpoint = JSON.parse(readFileSync(existingPath, 'utf-8'));
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not parse checkpoint: ' + err.message });
+  }
+
+  if (!checkpoint.startUrl) return res.status(400).json({ error: 'Checkpoint missing startUrl' });
+  if (checkpoint.status === 'completed') return res.status(400).json({ error: 'Scan already completed' });
+
+  const {
+    startUrl: url,
+    options: savedOptions = {},
+    pages: previousResults = [],
+    pendingUrls = [],
+  } = checkpoint;
+  const { maxDepth = 3, maxPages = 0, format = 'both', includePattern, excludePattern, respectRobots = true } = savedOptions;
+
+  const jobId = uuidv4();
+  const job = {
+    id: jobId,
+    url,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    resumedFrom: filename,
+    previousPages: previousResults.length,
+    options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
+    progress: { pagesScanned: previousResults.length, pagesDiscovered: previousResults.length, currentUrl: null },
+    reports: [],
+    summary: null,
+    error: null,
+  };
+  jobs.set(jobId, job);
+  sseClients.set(jobId, new Set());
+
+  res.json({ jobId, previousPages: previousResults.length, pendingUrls: pendingUrls.length });
+
+  (async () => {
+    let browser;
+    const jsonPath = existingPath; // overwrite the same checkpoint file
+    const htmlPath = existingPath.replace('.json', '.html');
+    const metaPath = existingPath.replace('.json', '.meta.json');
+
+    // Start with previously scanned results already in memory
+    const partialResults = [...previousResults];
+
+    let checkpointDirty = false;
+    let crawlerRef = null;
+
+    const writeMeta = (status, errorMsg = null) => {
+      try {
+        const meta = {
+          startUrl: url, status,
+          startedAt: checkpoint.startedAt,
+          options: savedOptions,
+          ...(errorMsg ? { error: errorMsg } : {}),
+          summary: { totalPages: partialResults.length, scannedAt: checkpoint.startedAt },
+          pendingUrlsCount: crawlerRef ? crawlerRef.queue.length : 0,
+        };
+        writeFileSync(metaPath, JSON.stringify(meta));
+      } catch {}
+    };
+
+    const writeResumeCheckpoint = (status = 'in-progress', errorMsg = null) => {
+      try {
+        const partial = {
+          startUrl: url, status,
+          startedAt: checkpoint.startedAt,
+          options: savedOptions,
+          ...(errorMsg ? { error: errorMsg } : {}),
+          summary: { totalPages: partialResults.length, scannedAt: checkpoint.startedAt },
+          pendingUrls: crawlerRef ? crawlerRef.queue.map(i => i.url) : [],
+          pages: partialResults,
+        };
+        writeFileSync(jsonPath, JSON.stringify(partial, null, 2));
+        writeMeta(status, errorMsg);
+        checkpointDirty = false;
+      } catch {}
+    };
+
+    try {
+      browser = await createBrowser(true);
+
+      // Remaining page budget (0 = unlimited)
+      const remainingPages = maxPages === 0 ? 0 : Math.max(1, maxPages - previousResults.length);
+      const crawler = new Crawler({ maxDepth, maxPages: remainingPages, respectRobots, includePattern, excludePattern });
+      crawlerRef = crawler;
+
+      // Pre-populate visited set so already-scanned pages are skipped
+      for (const page of previousResults) {
+        if (page.url) crawler.visited.add(page.url);
+      }
+
+      // Pre-populate queue from checkpoint if available, otherwise start fresh from root
+      if (pendingUrls.length > 0) {
+        for (const pendingUrl of pendingUrls) {
+          if (!crawler.visited.has(pendingUrl)) {
+            crawler.visited.add(pendingUrl);
+            crawler.queue.push({ url: pendingUrl, depth: 1 });
+          }
+        }
+      }
+      // If no pendingUrls, crawl() will start from the root URL and the
+      // pre-populated visited set will cause already-scanned pages to be skipped.
+
+      crawler.on('page:start', ({ url: pageUrl, index }) => {
+        const totalIndex = previousResults.length + index;
+        job.progress.currentUrl = pageUrl;
+        job.progress.pagesDiscovered = totalIndex;
+        broadcast(jobId, 'progress', { type: 'page:start', url: pageUrl, index: totalIndex, pagesScanned: job.progress.pagesScanned });
+      });
+
+      crawler.on('page:done', ({ url: pageUrl, index, violations, heuristics, error }) => {
+        job.progress.pagesScanned = previousResults.length + index;
+        broadcast(jobId, 'progress', { type: 'page:done', url: pageUrl, index: previousResults.length + index, violations, heuristics, error });
+      });
+
+      const scanPageWithCheckpoint = async (pageUrl, browser, options) => {
+        const result = await scanPage(pageUrl, browser, options);
+        partialResults.push(trimResult(result));
+        checkpointDirty = true;
+        if (partialResults.length % 10 === 0) writeResumeCheckpoint();
+        return result;
+      };
+
+      await crawler.crawl(url, scanPageWithCheckpoint, browser);
+      if (checkpointDirty) writeResumeCheckpoint();
+
+      const aggregated = aggregateResults(partialResults);
+      const savedReports = [];
+
+      if (format === 'html' || format === 'both') {
+        writeFileSync(htmlPath, generateHtmlReport(aggregated, url));
+        savedReports.push({ type: 'html', filename: filename.replace('.json', '.html'), path: htmlPath });
+      }
+
+      writeFileSync(jsonPath, generateJsonReport(aggregated, url));
+      savedReports.push({ type: 'json', filename, path: jsonPath });
+
+      // Update meta to reflect completion
+      try {
+        const meta = { startUrl: url, status: 'completed', startedAt: checkpoint.startedAt, options: savedOptions, summary: aggregated.summary, pendingUrlsCount: 0 };
+        writeFileSync(metaPath, JSON.stringify(meta));
+      } catch {}
+
+      job.status = 'done';
+      job.completedAt = new Date().toISOString();
+      job.reports = savedReports;
+      job.summary = aggregated.summary;
+
+      broadcast(jobId, 'done', {
+        jobId,
+        summary: aggregated.summary,
+        reports: savedReports.map(r => ({ type: r.type, filename: r.filename })),
+      });
+
+    } catch (err) {
+      job.status = 'error';
+      job.error = err.message;
+      writeResumeCheckpoint('interrupted', err.message);
+      broadcast(jobId, 'error', { message: err.message });
+    } finally {
+      if (browser) await browser.close();
+      setTimeout(() => {
+        const clients = sseClients.get(jobId);
+        if (clients) { for (const res of clients) try { res.end(); } catch {} }
+        sseClients.delete(jobId);
+      }, 5000);
+    }
+  })();
+});
+
 // DELETE /api/reports/:filename — delete a report (removes both JSON and HTML files)
 app.delete('/api/reports/:filename', (req, res) => {
   const filename = req.params.filename.replace(/[^a-z0-9_\-.]/gi, '');
@@ -303,6 +552,8 @@ app.delete('/api/reports/:filename', (req, res) => {
   try {
     unlinkSync(jsonPath);
     if (existsSync(htmlPath)) unlinkSync(htmlPath);
+    const metaPath = join(REPORTS_DIR, filename.replace('.json', '.meta.json'));
+    if (existsSync(metaPath)) unlinkSync(metaPath);
     res.json({ deleted: filename });
   } catch (err) {
     res.status(500).json({ error: err.message });

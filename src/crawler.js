@@ -124,8 +124,11 @@ export class Crawler extends EventEmitter {
     const origin = new URL(normalizedStart).origin;
     await this.loadRobotsTxt(normalizedStart);
 
-    this.queue = [{ url: normalizedStart, depth: 0 }];
-    this.visited.add(normalizedStart);
+    // Only initialize queue if not pre-populated (pre-population supports resume mode)
+    if (this.queue.length === 0) {
+      this.queue = [{ url: normalizedStart, depth: 0 }];
+      this.visited.add(normalizedStart);
+    }
 
     const results = [];
     // In unlimited mode treat depth as effectively infinite

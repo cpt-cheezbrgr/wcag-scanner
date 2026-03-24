@@ -397,6 +397,10 @@ async function loadPastReports() {
         : r.status === 'interrupted'
         ? '<span class="past-status-badge badge-interrupted">partial</span>'
         : '';
+      const actionBtns = isPartial ? `
+        <button class="past-item-action past-item-resume" data-filename="${escHtml(r.filename)}" title="Resume this scan from where it left off">▶ Resume</button>
+        ${!r.hasHtml ? `<button class="past-item-action past-item-finalize" data-filename="${escHtml(r.filename)}" title="Generate HTML report from partial data">⬇ Report</button>` : ''}
+      ` : '';
       return `
       <li class="past-item${isPartial ? ' past-item-partial' : ''}" tabindex="0" role="button" data-filename="${escHtml(r.filename)}"
           aria-label="View report for ${escHtml(r.startUrl || r.filename)}">
@@ -406,6 +410,7 @@ async function loadPastReports() {
           ${r.totalPages != null ? `<span>${r.totalPages} pages${isPartial ? ' so far' : ''}</span>` : ''}
           ${!isPartial && r.totalViolations != null ? `<span style="color:${r.totalViolations > 0 ? '#c0392b' : '#27ae60'}">${r.totalViolations} violations</span>` : ''}
           ${!isPartial && r.complianceScore != null ? `<span class="past-item-score" style="color:${r.complianceScore >= 80 ? '#27ae60' : r.complianceScore >= 60 ? '#e67e22' : '#c0392b'}">${r.complianceScore}% score</span>` : ''}
+          ${actionBtns}
           <button class="past-item-delete" data-filename="${escHtml(r.filename)}" title="Delete this report" aria-label="Delete report for ${escHtml(r.startUrl || r.filename)}">🗑</button>
         </div>
       </li>
@@ -420,20 +425,69 @@ async function loadPastReports() {
 
     pastList.querySelectorAll('.past-item-delete').forEach(btn => {
       btn.addEventListener('click', async (e) => {
-        e.stopPropagation(); // don't trigger the load-report click
+        e.stopPropagation();
         const filename = btn.dataset.filename;
         if (!confirm(`Delete this report?\n\n${filename}\n\nThis cannot be undone.`)) return;
-
         try {
           const resp = await fetch(`/api/reports/${filename}`, { method: 'DELETE' });
           if (!resp.ok) throw new Error((await resp.json()).error);
-          // Remove the list item from the DOM immediately
           btn.closest('li').remove();
           if (pastList.querySelectorAll('.past-item').length === 0) {
             pastList.innerHTML = '<li class="empty-state">No past reports yet.</li>';
           }
         } catch (err) {
           alert(`Could not delete report: ${err.message}`);
+        }
+      });
+    });
+
+    pastList.querySelectorAll('.past-item-finalize').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const filename = btn.dataset.filename;
+        btn.disabled = true;
+        btn.textContent = '⟳ Generating…';
+        try {
+          const resp = await fetch(`/api/reports/${filename}/finalize`, { method: 'POST' });
+          if (!resp.ok) throw new Error((await resp.json()).error);
+          await loadPastReports(); // refresh sidebar
+        } catch (err) {
+          alert(`Could not generate report: ${err.message}`);
+          btn.disabled = false;
+          btn.textContent = '⬇ Report';
+        }
+      });
+    });
+
+    pastList.querySelectorAll('.past-item-resume').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const filename = btn.dataset.filename;
+        if (!confirm(`Resume scan for ${filename}?\n\nPreviously scanned pages will be preserved and scanning will continue from where it left off.`)) return;
+        btn.disabled = true;
+        btn.textContent = '⟳ Starting…';
+        try {
+          const resp = await fetch(`/api/reports/${filename}/resume`, { method: 'POST' });
+          if (!resp.ok) throw new Error((await resp.json()).error);
+          const { jobId, previousPages } = await resp.json();
+
+          // Switch UI to scanning state
+          pagesLog.innerHTML = '';
+          progressBar.classList.add('indeterminate');
+          progressBar.style.width = '';
+          pagesStatus.textContent = `${previousPages} pages already scanned`;
+          currentUrlStatus.textContent = 'Resuming…';
+          const meta = filename.replace('.json', '');
+          scanUrlDisplay.textContent = meta.replace(/_\d{4}-\d{2}-\d{2}_.*/, '').replace(/_/g, '.');
+          showState('scanning');
+
+          currentJobId = jobId;
+          maxPagesForJob = 0; // treat as unlimited for progress bar
+          listenToJob(jobId, 0);
+        } catch (err) {
+          alert(`Could not resume scan: ${err.message}`);
+          btn.disabled = false;
+          btn.textContent = '▶ Resume';
         }
       });
     });
