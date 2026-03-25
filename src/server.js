@@ -118,8 +118,11 @@ app.post('/api/scan', async (req, res) => {
     // Write checkpoint every 10 pages to disk (survives crashes/restarts).
     let checkpointDirty = false;
     let crawlerRef = null; // set after crawler is created
+    const visitedPath = jsonPath.replace('.json', '.visited.json');
+
     const writeCheckpoint = (status = 'in-progress', errorMsg = null) => {
       try {
+        const pendingUrls = crawlerRef ? crawlerRef.queue.map(i => i.url) : [];
         const partial = {
           startUrl: url,
           status,
@@ -127,11 +130,14 @@ app.post('/api/scan', async (req, res) => {
           options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
           ...(errorMsg ? { error: errorMsg } : {}),
           summary: { totalPages: partialResults.length, scannedAt: job.startedAt },
-          // Save the queue so the scan can be resumed from this exact point
-          pendingUrls: crawlerRef ? crawlerRef.queue.map(i => i.url) : [],
+          pendingUrls,
           pages: partialResults,
         };
         writeFileSync(jsonPath, JSON.stringify(partial, null, 2));
+        // Small sidecar: just visited + pending URLs — used by resume to avoid
+        // loading the full (potentially hundreds of MB) checkpoint JSON.
+        const visitedUrls = crawlerRef ? [...crawlerRef.visited] : partialResults.map(p => p.url);
+        writeFileSync(visitedPath, JSON.stringify({ visitedUrls, pendingUrls }));
         writeMeta(status, errorMsg);
         checkpointDirty = false;
       } catch { /* non-fatal */ }
@@ -367,22 +373,54 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
   const existingPath = join(REPORTS_DIR, filename);
   if (!existsSync(existingPath)) return res.status(404).json({ error: 'Report not found' });
 
-  let checkpoint;
-  try {
-    checkpoint = JSON.parse(readFileSync(existingPath, 'utf-8'));
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not parse checkpoint: ' + err.message });
+  const metaPath = existingPath.replace('.json', '.meta.json');
+  const visitedPath = existingPath.replace('.json', '.visited.json');
+
+  // Load checkpoint info — prefer small sidecar files to avoid hitting Node's
+  // ~512MB string limit when reading large (200-500MB) checkpoint JSONs.
+  let url, savedOptions = {}, previousResults = [], pendingUrls = [], visitedUrls = [];
+  let checkpointStartedAt = new Date().toISOString();
+
+  const fileSize = statSync(existingPath).size;
+  const TOO_LARGE = 400 * 1024 * 1024; // 400MB
+
+  if (fileSize > TOO_LARGE || !existsSync(metaPath)) {
+    // Try to load from small sidecar files only
+    if (!existsSync(metaPath)) {
+      return res.status(500).json({ error: 'Checkpoint is too large to parse and no metadata sidecar found. Delete this scan and start a new one.' });
+    }
+    const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+    if (meta.status === 'completed') return res.status(400).json({ error: 'Scan already completed' });
+    url = meta.startUrl;
+    savedOptions = meta.options || {};
+    checkpointStartedAt = meta.startedAt || checkpointStartedAt;
+    // previousResults stays empty — pages can't be loaded from the oversized file.
+    // Visited URLs come from the .visited.json sidecar so we skip already-scanned pages.
+    if (existsSync(visitedPath)) {
+      const v = JSON.parse(readFileSync(visitedPath, 'utf-8'));
+      visitedUrls = v.visitedUrls || [];
+      pendingUrls = v.pendingUrls || [];
+    }
+  } else {
+    // File is small enough to parse normally
+    let checkpoint;
+    try {
+      checkpoint = JSON.parse(readFileSync(existingPath, 'utf-8'));
+    } catch (err) {
+      return res.status(500).json({ error: 'Could not parse checkpoint: ' + err.message });
+    }
+    if (!checkpoint.startUrl) return res.status(400).json({ error: 'Checkpoint missing startUrl' });
+    if (checkpoint.status === 'completed') return res.status(400).json({ error: 'Scan already completed' });
+    url = checkpoint.startUrl;
+    savedOptions = checkpoint.options || {};
+    previousResults = checkpoint.pages || [];
+    pendingUrls = checkpoint.pendingUrls || [];
+    visitedUrls = previousResults.map(p => p.url).filter(Boolean);
+    checkpointStartedAt = checkpoint.startedAt || checkpointStartedAt;
   }
 
-  if (!checkpoint.startUrl) return res.status(400).json({ error: 'Checkpoint missing startUrl' });
-  if (checkpoint.status === 'completed') return res.status(400).json({ error: 'Scan already completed' });
+  if (!url) return res.status(400).json({ error: 'Could not determine start URL from checkpoint' });
 
-  const {
-    startUrl: url,
-    options: savedOptions = {},
-    pages: previousResults = [],
-    pendingUrls = [],
-  } = checkpoint;
   const { maxDepth = 3, maxPages = 0, format = 'both', includePattern, excludePattern, respectRobots = true } = savedOptions;
 
   const jobId = uuidv4();
@@ -410,20 +448,21 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
     const htmlPath = existingPath.replace('.json', '.html');
     const metaPath = existingPath.replace('.json', '.meta.json');
 
-    // Start with previously scanned results already in memory
+    // Start with previously scanned results already in memory (may be empty for large checkpoints)
     const partialResults = [...previousResults];
 
     let checkpointDirty = false;
     let crawlerRef = null;
+    const resumeVisitedPath = existingPath.replace('.json', '.visited.json');
 
     const writeMeta = (status, errorMsg = null) => {
       try {
         const meta = {
           startUrl: url, status,
-          startedAt: checkpoint.startedAt,
+          startedAt: checkpointStartedAt,
           options: savedOptions,
           ...(errorMsg ? { error: errorMsg } : {}),
-          summary: { totalPages: partialResults.length, scannedAt: checkpoint.startedAt },
+          summary: { totalPages: partialResults.length, scannedAt: checkpointStartedAt },
           pendingUrlsCount: crawlerRef ? crawlerRef.queue.length : 0,
         };
         writeFileSync(metaPath, JSON.stringify(meta));
@@ -432,16 +471,20 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
 
     const writeResumeCheckpoint = (status = 'in-progress', errorMsg = null) => {
       try {
+        const pendingUrlsList = crawlerRef ? crawlerRef.queue.map(i => i.url) : [];
         const partial = {
           startUrl: url, status,
-          startedAt: checkpoint.startedAt,
+          startedAt: checkpointStartedAt,
           options: savedOptions,
           ...(errorMsg ? { error: errorMsg } : {}),
-          summary: { totalPages: partialResults.length, scannedAt: checkpoint.startedAt },
-          pendingUrls: crawlerRef ? crawlerRef.queue.map(i => i.url) : [],
+          summary: { totalPages: partialResults.length, scannedAt: checkpointStartedAt },
+          pendingUrls: pendingUrlsList,
           pages: partialResults,
         };
         writeFileSync(jsonPath, JSON.stringify(partial, null, 2));
+        // Update visited sidecar
+        const allVisited = crawlerRef ? [...crawlerRef.visited] : partialResults.map(p => p.url).filter(Boolean);
+        writeFileSync(resumeVisitedPath, JSON.stringify({ visitedUrls: allVisited, pendingUrls: pendingUrlsList }));
         writeMeta(status, errorMsg);
         checkpointDirty = false;
       } catch {}
@@ -455,10 +498,9 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
       const crawler = new Crawler({ maxDepth, maxPages: remainingPages, respectRobots, includePattern, excludePattern });
       crawlerRef = crawler;
 
-      // Pre-populate visited set so already-scanned pages are skipped
-      for (const page of previousResults) {
-        if (page.url) crawler.visited.add(page.url);
-      }
+      // Pre-populate visited set from previously scanned pages + visited sidecar
+      for (const u of visitedUrls) crawler.visited.add(u);
+      for (const page of previousResults) { if (page.url) crawler.visited.add(page.url); }
 
       // Pre-populate queue from checkpoint if available, otherwise start fresh from root
       if (pendingUrls.length > 0) {
@@ -554,6 +596,8 @@ app.delete('/api/reports/:filename', (req, res) => {
     if (existsSync(htmlPath)) unlinkSync(htmlPath);
     const metaPath = join(REPORTS_DIR, filename.replace('.json', '.meta.json'));
     if (existsSync(metaPath)) unlinkSync(metaPath);
+    const visitedPath = join(REPORTS_DIR, filename.replace('.json', '.visited.json'));
+    if (existsSync(visitedPath)) unlinkSync(visitedPath);
     res.json({ deleted: filename });
   } catch (err) {
     res.status(500).json({ error: err.message });
