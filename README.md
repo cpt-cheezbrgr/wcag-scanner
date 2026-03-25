@@ -187,11 +187,24 @@ The HTML report includes a grid showing the pass/fail/manual status of all 50 WC
 
 ## Report Files
 
-Reports are saved to the `reports/` directory as:
-- `{domain}_{timestamp}.html` — Human-readable report, standalone (no external dependencies)
-- `{domain}_{timestamp}.json` — Machine-readable data for programmatic use or archiving
+Reports are saved locally to the `reports/` directory. Each scan produces up to four files:
 
-The `reports/` directory is excluded from git (`.gitignore`) so scan data stays local and does not get committed to the repository.
+| File | Purpose |
+|------|---------|
+| `{domain}_{timestamp}.html` | Human-readable report, fully standalone (no external dependencies) |
+| `{domain}_{timestamp}.json` | Scan data for programmatic use or archiving |
+| `{domain}_{timestamp}.meta.json` | Small metadata sidecar used by the sidebar (start URL, page count, violation summary) |
+| `{domain}_{timestamp}.visited.json` | Small list of visited URLs used to resume interrupted scans |
+
+The `reports/` directory is excluded from git (`.gitignore`) so scan data stays local and is never committed to the repository.
+
+### Local-first storage
+
+Report data is stored entirely on your local machine — no data is sent to any external service. This is intentional: accessibility scan results may contain sensitive information about your site's structure and content.
+
+Earlier versions of the scanner stored complete axe-core pass data for every rule on every page. For large sites (500+ pages), this caused report files to exceed Node.js's internal memory limits (~512MB), preventing reports from being saved at all. The storage format was updated to strip pass node details before saving — only the rule IDs are retained, which is all the report needs to compute compliance scores. This reduced typical report sizes from 200–500MB down to under 20MB for most large sites.
+
+Alongside each checkpoint, the scanner writes a `.visited.json` sidecar file containing only the list of URLs visited so far. This allows interrupted scans to be resumed without loading the full report file into memory.
 
 ---
 
