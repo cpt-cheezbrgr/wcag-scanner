@@ -421,7 +421,7 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
 
   if (!url) return res.status(400).json({ error: 'Could not determine start URL from checkpoint' });
 
-  const { maxDepth = 3, maxPages = 0, format = 'both', includePattern, excludePattern, respectRobots = true } = savedOptions;
+  const { maxDepth = 3, maxPages = 0, format = 'both', includePattern, excludePattern, respectRobots = true, stripQueryStrings = true } = savedOptions;
 
   const jobId = uuidv4();
   const job = {
