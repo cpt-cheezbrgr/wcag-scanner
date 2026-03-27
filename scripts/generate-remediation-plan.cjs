@@ -234,6 +234,28 @@ const sites = [
       { id: 'html-has-lang',          impact: 'SERIOUS',  pages: 1,    wcag: '3.1.1', help: 'html element must have a lang attribute' },
     ],
   },
+  {
+    name: 'Mount Carmel Health System',
+    url:  'https://www.mountcarmelhealth.com',
+    pages: 1193, violations: 14, critical: 6, serious: 8,
+    score: 100, instances: 960, heuristics: 4922,
+    violations_detail: [
+      { id: 'color-contrast',         impact: 'SERIOUS',  pages: 312,  wcag: '1.4.3', help: 'Elements must meet minimum color contrast ratio thresholds' },
+      { id: 'link-name',              impact: 'SERIOUS',  pages: 38,   wcag: '2.4.4', help: 'Links must have discernible text (empty card links)' },
+      { id: 'frame-title',            impact: 'SERIOUS',  pages: 37,   wcag: '2.4.1', help: 'Frames and iframes must have an accessible name' },
+      { id: 'button-name',            impact: 'CRITICAL', pages: 24,   wcag: '4.1.2', help: 'Buttons must have discernible text (YouTube player buttons)' },
+      { id: 'aria-required-children', impact: 'CRITICAL', pages: 20,   wcag: '4.1.2', help: 'ARIA roles must contain required child elements (hgm-tabs)' },
+      { id: 'aria-prohibited-attr',   impact: 'SERIOUS',  pages: 21,   wcag: '4.1.2', help: 'Elements must only use permitted ARIA attributes (YouTube)' },
+      { id: 'aria-valid-attr-value',  impact: 'CRITICAL', pages: 17,   wcag: '4.1.2', help: 'ARIA attributes must conform to valid values (hgm-tabs)' },
+      { id: 'list',                   impact: 'SERIOUS',  pages: 13,   wcag: '1.3.1', help: 'ul/ol must only directly contain li elements' },
+      { id: 'listitem',               impact: 'SERIOUS',  pages: 9,    wcag: '1.3.1', help: 'li elements must be in a ul or ol' },
+      { id: 'aria-roles',             impact: 'CRITICAL', pages: 3,    wcag: '4.1.2', help: 'ARIA roles used must conform to valid values' },
+      { id: 'nested-interactive',     impact: 'SERIOUS',  pages: 3,    wcag: '4.1.2', help: 'Interactive controls must not be nested' },
+      { id: 'autocomplete-valid',     impact: 'SERIOUS',  pages: 2,    wcag: '1.3.5', help: 'autocomplete attribute must be used correctly ("disable" → "off")' },
+      { id: 'image-alt',              impact: 'CRITICAL', pages: 6,    wcag: '1.1.1', help: 'Images must have alternative text' },
+      { id: 'label',                  impact: 'CRITICAL', pages: 1,    wcag: '4.1.2', help: 'Form elements must have labels' },
+    ],
+  },
 ];
 
 // ─── Platform-level fixes (cross-site patterns) ───────────────────────────────
@@ -241,8 +263,8 @@ const platformFixes = [
   {
     title: '1. Color Contrast — sitewide (WCAG 1.4.3)',
     impact: 'SERIOUS',
-    sites: 'All 6 sites',
-    pagesAffected: '~13,500+ pages',
+    sites: 'All 7 sites',
+    pagesAffected: '~13,800+ pages',
     description: 'Text and interactive elements do not meet the 4.5:1 contrast ratio required for normal text (3:1 for large text). This is the single most widespread issue across the entire portfolio.',
     fix: 'Audit the global CSS color palette. Primary offenders include light grey text on white backgrounds, tinted button labels, and blue link colors on colored backgrounds. Use the WebAIM Contrast Checker to validate replacements. Update the design system/CSS variables so the fix propagates across all sites.',
     effort: 'Medium — CSS changes, design system update',
@@ -250,7 +272,7 @@ const platformFixes = [
   {
     title: '2. Missing Image Alt Text — image-alt (WCAG 1.1.1)',
     impact: 'CRITICAL',
-    sites: 'All 6 sites',
+    sites: 'All 7 sites',
     pagesAffected: '500+ pages',
     description: 'Images are missing the alt attribute or have an empty alt attribute where descriptive text is required. Screen reader users receive no information about these images.',
     fix: 'Add descriptive alt text to all informational images. Decorative images should use alt="" (empty string). In the CMS, make the alt text field required when uploading images. Inline images added via the rich text editor need special attention — enforce alt text in editor configuration.',
@@ -259,8 +281,8 @@ const platformFixes = [
   {
     title: '3. hgm-tabs ARIA Errors — aria-required-children / aria-valid-attr-value (WCAG 4.1.2)',
     impact: 'CRITICAL',
-    sites: '5 of 6 sites',
-    pagesAffected: '80+ pages',
+    sites: '6 of 7 sites',
+    pagesAffected: '100+ pages',
     description: 'The shared "hgm-tabs" component (recognizable by class="hgm-tabs") uses role="tablist" on a <form> element but does not include required child elements with role="tab". Additionally, aria-controls values contain spaces, which is invalid — IDs referenced by aria-controls cannot contain spaces.',
     fix: 'Fix at the shared component/platform level:\n(a) Replace role="tablist" on the <form> with a proper wrapper <div role="tablist"> containing <button role="tab"> children.\n(b) Remove spaces from aria-controls values and their corresponding element IDs.',
     effort: 'Low — one component fix resolves all 5 sites',
@@ -268,8 +290,8 @@ const platformFixes = [
   {
     title: '4. YouTube Embedded Player Buttons — button-name / aria-prohibited-attr (WCAG 4.1.2)',
     impact: 'CRITICAL / SERIOUS',
-    sites: 'All 6 sites',
-    pagesAffected: '200+ pages',
+    sites: 'All 7 sites',
+    pagesAffected: '300+ pages',
     description: 'YouTube\'s embedded video player injects buttons without accessible names and uses ARIA attributes that are not permitted on certain elements. This is a third-party component issue.',
     fix: 'Short-term: add a title attribute to all YouTube <iframe> embeds describing the video content.\nLong-term: use YouTube\'s Privacy-Enhanced mode (youtube-nocookie.com) and consider a custom play button overlay that is fully accessible before the iframe loads.',
     effort: 'Low (iframe titles) — content update',
@@ -277,7 +299,7 @@ const platformFixes = [
   {
     title: '5. Empty Card Links — link-name (WCAG 2.4.4)',
     impact: 'SERIOUS',
-    sites: 'All 6 sites',
+    sites: 'All 7 sites',
     pagesAffected: '900+ pages',
     description: 'The hgm-card component renders a full-card clickable link (<a class="hgm-card__link" href="">) with no visible text or aria-label. Screen reader users hear "link" with no destination or purpose.',
     fix: 'Update the hgm-card component to add an aria-label to the card link derived from the card\'s heading text. Example: aria-label="Learn more about [Card Title]". This can be templated at the component level.',
@@ -286,8 +308,8 @@ const platformFixes = [
   {
     title: '6. Missing iframe Titles — frame-title (WCAG 2.4.1 / 4.1.2)',
     impact: 'SERIOUS',
-    sites: 'All 6 sites',
-    pagesAffected: '130+ pages',
+    sites: 'All 7 sites',
+    pagesAffected: '150+ pages',
     description: 'Embedded iframes (YouTube videos, Vimeo videos, Google Maps, third-party widgets) are missing the title attribute. Screen reader users cannot determine the purpose of the frame.',
     fix: 'Add a descriptive title attribute to every <iframe>. Examples: title="Map showing our hospital location", title="Video: Patient testimonial — Dr. Smith". Add a CMS validation rule or post-publish check that flags untitled iframes.',
     effort: 'Low — content update; medium to automate in CMS',
@@ -295,7 +317,7 @@ const platformFixes = [
   {
     title: '7. Malformed List Structure — list / listitem (WCAG 1.3.1)',
     impact: 'SERIOUS',
-    sites: '5 of 6 sites',
+    sites: '6 of 7 sites',
     pagesAffected: '500+ pages',
     description: 'The hgm-badge component places <li class="badge"> elements directly inside elements that are not <ul> or <ol>. Assistive technologies cannot correctly interpret the list relationship.',
     fix: 'Wrap hgm-badge pill lists in a proper <ul> element. Update the component template — this is a single platform-level fix that will resolve the issue across all affected sites.',
@@ -304,7 +326,7 @@ const platformFixes = [
   {
     title: '8. Invalid autocomplete Attribute — autocomplete-valid (WCAG 1.3.5)',
     impact: 'SERIOUS',
-    sites: '5 of 6 sites',
+    sites: '6 of 7 sites',
     pagesAffected: '5–10 pages',
     description: 'A ZIP code input field uses autocomplete="disable" which is not a valid token. The correct value to disable autocomplete is autocomplete="off".',
     fix: 'Change autocomplete="disable" to autocomplete="off" on the ZIP code / postal code input field. This appears to be a shared form component — fix once and deploy.',
@@ -313,7 +335,7 @@ const platformFixes = [
   {
     title: '9. Select Elements Without Labels — select-name (WCAG 4.1.2)',
     impact: 'CRITICAL',
-    sites: '4 of 6 sites',
+    sites: '4 of 7 sites',
     pagesAffected: '160+ pages',
     description: 'Dropdown <select> elements (particularly state/province dropdowns in shared forms) do not have associated <label> elements. Screen reader users cannot determine what information to enter.',
     fix: 'Add a visible or visually-hidden <label> linked via the for attribute to each <select> element. For the state dropdown: <label for="state" class="sr-only">State</label>. Fix at the shared form component level.',
@@ -351,7 +373,7 @@ function buildDoc() {
     new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { before: 0, after: 80 },
-      children: [new TextRun({ text: 'Report Generated: March 26, 2026', font: 'Arial', size: 24, color: '777777' })],
+      children: [new TextRun({ text: 'Report Generated: March 27, 2026', font: 'Arial', size: 24, color: '777777' })],
     }),
     new Paragraph({
       alignment: AlignmentType.CENTER,
@@ -371,7 +393,7 @@ function buildDoc() {
   // ── 1. Executive Summary ────────────────────────────────────────────────────
   children.push(
     heading1('1. Executive Summary', null, false),
-    p('This report presents the findings of an automated WCAG 2.1 Level AA accessibility scan conducted across six Trinity Health system websites. Scans were performed using the axe-core accessibility engine combined with custom heuristic checks, crawling a total of 16,815 pages.'),
+    p('This report presents the findings of an automated WCAG 2.1 Level AA accessibility scan conducted across seven Trinity Health system websites. Scans were performed using the axe-core accessibility engine combined with custom heuristic checks, crawling a total of 18,008 pages.'),
     p(''),
     p('The HHS Section 504 final rule requires healthcare organizations receiving federal funding to conform to WCAG 2.1 AA by May 11, 2026 (large recipients). With less than seven weeks remaining at the time of this report, immediate action is required.', { bold: false }),
     p(''),
@@ -408,17 +430,17 @@ function buildDoc() {
         new TableRow({
           children: [
             dataCell('TOTAL', 2800, { bold: true, fill: LIGHT_BLUE }),
-            dataCell('16,815', 1200, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER }),
-            dataCell('37', 1200, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER, color: RED }),
-            dataCell('56', 1100, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER, color: ORANGE }),
-            dataCell('91', 1100, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER }),
+            dataCell('18,008', 1200, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER }),
+            dataCell('43', 1200, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER, color: RED }),
+            dataCell('64', 1100, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER, color: ORANGE }),
+            dataCell('105', 1100, { bold: true, fill: LIGHT_BLUE, align: AlignmentType.CENTER }),
             dataCell('', 1960, { fill: LIGHT_BLUE }),
           ],
         }),
       ],
     }),
     p(''),
-    p('Note: Scans for mountcarmelhealth.com, loyolamedicine.org, and trinityhealthmichigan.org are in progress and will be incorporated in the next version of this plan.', { italics: true, color: '777777' }),
+    p('Note: Scans for loyolamedicine.org and trinityhealthmichigan.org are pending and will be incorporated in the next version of this plan.', { italics: true, color: '777777' }),
     p(''),
     heading2('Key Takeaways'),
     bullet('Color contrast failures are the most pervasive issue — affecting virtually every page on every site. This is a design system problem requiring a CSS-level fix.'),
@@ -611,7 +633,7 @@ function buildDoc() {
 
     p(''),
     heading2('Phase 4 — Ongoing: Scans for Remaining Sites'),
-    bullet('Complete scans for mountcarmelhealth.com, loyolamedicine.org, trinityhealthmichigan.org'),
+    bullet('Complete scans for loyolamedicine.org and trinityhealthmichigan.org'),
     bullet('Incorporate findings into this plan and update priority list'),
     bullet('Establish recurring monthly scans to catch regressions'),
     bullet('Integrate accessibility checks into the CMS publishing workflow'),
