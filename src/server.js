@@ -376,33 +376,33 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
   const metaPath = existingPath.replace('.json', '.meta.json');
   const visitedPath = existingPath.replace('.json', '.visited.json');
 
-  // Load checkpoint info — prefer small sidecar files to avoid hitting Node's
-  // ~512MB string limit when reading large (200-500MB) checkpoint JSONs.
+  // Load checkpoint info. Always check the small meta.json sidecar first —
+  // reading the full checkpoint JSON (200-500MB) into memory crashes Node.js
+  // and drops the connection, causing a "Load failed" error in the browser.
   let url, savedOptions = {}, previousResults = [], pendingUrls = [], visitedUrls = [];
   let checkpointStartedAt = new Date().toISOString();
 
-  const fileSize = statSync(existingPath).size;
-  const TOO_LARGE = 400 * 1024 * 1024; // 400MB
-
-  if (fileSize > TOO_LARGE || !existsSync(metaPath)) {
-    // Try to load from small sidecar files only
-    if (!existsSync(metaPath)) {
-      return res.status(500).json({ error: 'Checkpoint is too large to parse and no metadata sidecar found. Delete this scan and start a new one.' });
-    }
+  if (existsSync(metaPath)) {
+    // Fast path: read only the tiny sidecar files
     const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
-    if (meta.status === 'completed') return res.status(400).json({ error: 'Scan already completed' });
+    if (meta.status === 'completed') return res.status(400).json({ error: 'Scan already completed — open the report to view results.' });
     url = meta.startUrl;
     savedOptions = meta.options || {};
     checkpointStartedAt = meta.startedAt || checkpointStartedAt;
-    // previousResults stays empty — pages can't be loaded from the oversized file.
-    // Visited URLs come from the .visited.json sidecar so we skip already-scanned pages.
     if (existsSync(visitedPath)) {
       const v = JSON.parse(readFileSync(visitedPath, 'utf-8'));
       visitedUrls = v.visitedUrls || [];
       pendingUrls = v.pendingUrls || [];
     }
   } else {
-    // File is small enough to parse normally
+    // No sidecar — fall back to parsing the checkpoint JSON directly.
+    // Only safe for small files; large ones will have crashed before sidecar
+    // support was added. Limit to 50MB to avoid OOM.
+    const fileSize = statSync(existingPath).size;
+    const TOO_LARGE = 50 * 1024 * 1024; // 50MB
+    if (fileSize > TOO_LARGE) {
+      return res.status(500).json({ error: 'This scan predates sidecar file support and is too large to resume. Delete it and start a fresh scan.' });
+    }
     let checkpoint;
     try {
       checkpoint = JSON.parse(readFileSync(existingPath, 'utf-8'));
@@ -410,7 +410,7 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
       return res.status(500).json({ error: 'Could not parse checkpoint: ' + err.message });
     }
     if (!checkpoint.startUrl) return res.status(400).json({ error: 'Checkpoint missing startUrl' });
-    if (checkpoint.status === 'completed') return res.status(400).json({ error: 'Scan already completed' });
+    if (checkpoint.status === 'completed') return res.status(400).json({ error: 'Scan already completed — open the report to view results.' });
     url = checkpoint.startUrl;
     savedOptions = checkpoint.options || {};
     previousResults = checkpoint.pages || [];
