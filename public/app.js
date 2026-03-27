@@ -393,24 +393,28 @@ async function loadPastReports() {
     }
     pastList.innerHTML = reports.map(r => {
       const isPartial = r.status === 'in-progress' || r.status === 'interrupted';
+      const isNeedsRescan = r.status === 'needs-rescan';
       const statusBadge = r.status === 'in-progress'
         ? '<span class="past-status-badge badge-inprogress">in-progress</span>'
         : r.status === 'interrupted'
         ? '<span class="past-status-badge badge-interrupted">partial</span>'
+        : r.status === 'needs-rescan'
+        ? '<span class="past-status-badge badge-needs-rescan">⚠ rescan needed</span>'
         : '';
       const actionBtns = isPartial ? `
         <button class="past-item-action past-item-resume" data-filename="${escHtml(r.filename)}" title="Resume this scan from where it left off">▶ Resume</button>
         ${!r.hasHtml ? `<button class="past-item-action past-item-finalize" data-filename="${escHtml(r.filename)}" title="Generate HTML report from partial data">⬇ Report</button>` : ''}
       ` : '';
       return `
-      <li class="past-item${isPartial ? ' past-item-partial' : ''}" tabindex="0" role="button" data-filename="${escHtml(r.filename)}"
+      <li class="past-item${isPartial ? ' past-item-partial' : ''}${isNeedsRescan ? ' past-item-needs-rescan' : ''}" tabindex="0" role="button" data-filename="${escHtml(r.filename)}"
           aria-label="View report for ${escHtml(r.startUrl || r.filename)}">
         <div class="past-item-url">${escHtml(r.startUrl || r.filename)} ${statusBadge}</div>
+        ${isNeedsRescan ? `<div class="past-item-rescan-note">Original scan data was lost. Start a new scan to re-scan this site.</div>` : ''}
         <div class="past-item-meta">
           <span>${r.scannedAt ? new Date(r.scannedAt).toLocaleDateString() : ''}</span>
           ${r.totalPages != null ? `<span>${r.totalPages} pages${isPartial ? ' so far' : ''}</span>` : ''}
-          ${!isPartial && r.totalViolations != null ? `<span style="color:${r.totalViolations > 0 ? '#c0392b' : '#27ae60'}">${r.totalViolations} violations</span>` : ''}
-          ${!isPartial && r.complianceScore != null ? `<span class="past-item-score" style="color:${r.complianceScore >= 80 ? '#27ae60' : r.complianceScore >= 60 ? '#e67e22' : '#c0392b'}">${r.complianceScore}% score</span>` : ''}
+          ${!isPartial && !isNeedsRescan && r.totalViolations != null ? `<span style="color:${r.totalViolations > 0 ? '#c0392b' : '#27ae60'}">${r.totalViolations} violations</span>` : ''}
+          ${!isPartial && !isNeedsRescan && r.complianceScore != null ? `<span class="past-item-score" style="color:${r.complianceScore >= 80 ? '#27ae60' : r.complianceScore >= 60 ? '#e67e22' : '#c0392b'}">${r.complianceScore}% score</span>` : ''}
           ${actionBtns}
           <button class="past-item-delete" data-filename="${escHtml(r.filename)}" title="Delete this report" aria-label="Delete report for ${escHtml(r.startUrl || r.filename)}">🗑</button>
         </div>
