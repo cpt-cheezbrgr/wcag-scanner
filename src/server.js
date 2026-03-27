@@ -209,6 +209,18 @@ app.post('/api/scan', async (req, res) => {
       job.reports = savedReports;
       job.summary = aggregated.summary;
 
+      // Update meta.json to "completed" with full summary so the sidebar and
+      // resume endpoint correctly treat this scan as finished on next server start.
+      try {
+        const completedMeta = {
+          startUrl: url, status: 'completed', startedAt: job.startedAt,
+          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots, stripQueryStrings },
+          summary: { ...aggregated.summary, scannedAt: new Date().toISOString() },
+          pendingUrlsCount: 0,
+        };
+        writeFileSync(jsonPath.replace('.json', '.meta.json'), JSON.stringify(completedMeta));
+      } catch { /* non-fatal */ }
+
       broadcast(jobId, 'done', {
         jobId,
         summary: aggregated.summary,
@@ -420,6 +432,20 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
   }
 
   if (!url) return res.status(400).json({ error: 'Could not determine start URL from checkpoint' });
+
+  // Guard: if no URLs are pending but many have already been visited, the scan
+  // was already complete — the meta just wasn't updated. Resuming would re-scan
+  // only the root page and overwrite the original full results. Block it instead.
+  if (pendingUrls.length === 0 && visitedUrls.length > 1) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+      meta.status = 'completed';
+      writeFileSync(metaPath, JSON.stringify(meta));
+    } catch { /* non-fatal */ }
+    return res.status(400).json({
+      error: `This scan already visited ${visitedUrls.length.toLocaleString()} pages with none remaining — it was already complete. The meta status has been corrected. Use the ⬇ Report button to generate the HTML report from the saved data.`,
+    });
+  }
 
   const { maxDepth = 3, maxPages = 0, format = 'both', includePattern, excludePattern, respectRobots = true, stripQueryStrings = true } = savedOptions;
 
