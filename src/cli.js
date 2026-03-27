@@ -30,6 +30,7 @@ program
   .option('-o, --output <dir>', 'Output directory for reports', './reports')
   .option('-f, --format <fmt>', 'Report format: html, json, or both', 'html')
   .option('--no-robots', 'Ignore robots.txt restrictions')
+  .option('--keep-query-strings', 'Keep URL query strings (default: strip them to avoid duplicate pages from UTM/tracking params)')
   .option('--include <pattern>', 'Only crawl URLs matching this regex pattern')
   .option('--exclude <pattern>', 'Skip URLs matching this regex pattern')
   .option('--open', 'Open HTML report in browser when done')
@@ -71,6 +72,7 @@ program
         maxDepth,
         maxPages,
         respectRobots: opts.robots !== false,
+        stripQueryStrings: !opts.keepQueryStrings,
         includePattern: opts.include,
         excludePattern: opts.exclude,
       });

@@ -13,6 +13,9 @@ export class Crawler extends EventEmitter {
     this.includePattern = options.includePattern ? new RegExp(options.includePattern) : null;
     this.excludePattern = options.excludePattern ? new RegExp(options.excludePattern) : null;
     this.respectRobots = options.respectRobots ?? true;
+    // Strip query strings before deduplication to avoid scanning the same page
+    // multiple times due to UTM parameters and other tracking tokens.
+    this.stripQueryStrings = options.stripQueryStrings ?? true;
 
     this.visited = new Set();
     this.queue = []; // { url, depth }
@@ -20,14 +23,17 @@ export class Crawler extends EventEmitter {
   }
 
   /**
-   * Normalize a URL: remove fragments, optionally strip query strings.
+   * Normalize a URL: remove fragments and (by default) query strings.
+   * Stripping query strings prevents UTM/tracking parameters from being
+   * treated as unique pages, which can inflate page counts significantly.
    */
   normalizeUrl(rawUrl, baseUrl) {
     try {
       const resolved = new URL(rawUrl, baseUrl);
-      // Strip fragment
+      // Always strip fragment
       resolved.hash = '';
-      // Normalize trailing slash for root only
+      // Strip query string unless the caller opted out
+      if (this.stripQueryStrings) resolved.search = '';
       return resolved.href;
     } catch {
       return null;

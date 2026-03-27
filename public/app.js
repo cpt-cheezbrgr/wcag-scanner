@@ -85,6 +85,7 @@ async function startScan(url) {
   const includePattern = document.getElementById('include-pattern').value.trim() || undefined;
   const excludePattern = document.getElementById('exclude-pattern').value.trim() || undefined;
   const respectRobots = document.getElementById('robots-select').value === 'true';
+  const stripQueryStrings = document.getElementById('strip-query-check').checked;
 
   maxPagesForJob = maxPages;
   scanBtn.disabled = true;
@@ -108,7 +109,7 @@ async function startScan(url) {
     const resp = await fetch('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, maxDepth, maxPages, format: 'both', includePattern, excludePattern, respectRobots }),
+      body: JSON.stringify({ url, maxDepth, maxPages, format: 'both', includePattern, excludePattern, respectRobots, stripQueryStrings }),
     });
     if (!resp.ok) {
       const err = await resp.json();

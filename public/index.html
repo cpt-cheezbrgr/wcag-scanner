@@ -260,6 +260,13 @@
               <option value="false">Ignore robots.txt</option>
             </select>
           </div>
+          <div class="form-group">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer;">
+              <input type="checkbox" id="strip-query-check" checked style="width:auto;margin:0;">
+              Strip query strings from URLs
+            </label>
+            <div class="form-hint">Recommended — prevents UTM and tracking parameters (e.g. ?utm_source=email) from being counted as separate pages</div>
+          </div>
         </div>
 
         <button type="submit" class="scan-btn" id="scan-btn">

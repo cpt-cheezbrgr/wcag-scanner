@@ -60,7 +60,7 @@ function broadcast(jobId, event, data) {
 
 // POST /api/scan — start a scan job
 app.post('/api/scan', async (req, res) => {
-  const { url, maxDepth = 3, maxPages = 50, format = 'both', includePattern, excludePattern, respectRobots = true } = req.body;
+  const { url, maxDepth = 3, maxPages = 50, format = 'both', includePattern, excludePattern, respectRobots = true, stripQueryStrings = true } = req.body;
 
   if (!url) return res.status(400).json({ error: 'url is required' });
   try { new URL(url); } catch {
@@ -73,7 +73,7 @@ app.post('/api/scan', async (req, res) => {
     url,
     status: 'running',
     startedAt: new Date().toISOString(),
-    options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
+    options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots, stripQueryStrings },
     progress: { pagesScanned: 0, pagesDiscovered: 0, currentUrl: null },
     reports: [],
     summary: null,
@@ -106,7 +106,7 @@ app.post('/api/scan', async (req, res) => {
           startUrl: url,
           status,
           startedAt: job.startedAt,
-          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
+          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots, stripQueryStrings },
           ...(errorMsg ? { error: errorMsg } : {}),
           summary: { totalPages: partialResults.length, scannedAt: job.startedAt },
           pendingUrlsCount: crawlerRef ? crawlerRef.queue.length : 0,
@@ -127,7 +127,7 @@ app.post('/api/scan', async (req, res) => {
           startUrl: url,
           status,
           startedAt: job.startedAt,
-          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
+          options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots, stripQueryStrings },
           ...(errorMsg ? { error: errorMsg } : {}),
           summary: { totalPages: partialResults.length, scannedAt: job.startedAt },
           pendingUrls,
@@ -149,7 +149,7 @@ app.post('/api/scan', async (req, res) => {
     try {
       browser = await createBrowser(true);
 
-      const crawler = new Crawler({ maxDepth, maxPages, respectRobots, includePattern, excludePattern });
+      const crawler = new Crawler({ maxDepth, maxPages, respectRobots, includePattern, excludePattern, stripQueryStrings });
       crawlerRef = crawler;
 
       crawler.on('page:start', ({ url: pageUrl, index }) => {
@@ -431,7 +431,7 @@ app.post('/api/reports/:filename/resume', async (req, res) => {
     startedAt: new Date().toISOString(),
     resumedFrom: filename,
     previousPages: previousResults.length,
-    options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots },
+    options: { maxDepth, maxPages, format, includePattern, excludePattern, respectRobots, stripQueryStrings },
     progress: { pagesScanned: previousResults.length, pagesDiscovered: previousResults.length, currentUrl: null },
     reports: [],
     summary: null,
