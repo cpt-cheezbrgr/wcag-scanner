@@ -16,6 +16,7 @@ const OUT_DIR     = path.join(__dirname, '..');
 
 // ─── Site manifest (name → JSON filename) ─────────────────────────────────────
 const SITES = [
+  { name: 'Mount Carmel Health System',         file: 'mountcarmelhealth_com_2026-03-30_17-50-15.json' },
   { name: 'MercyOne',                          file: 'www_mercyone_org_2026-03-24_15-34-45.json' },
   { name: 'Saint Alphonsus',                   file: 'www_saintalphonsus_org_2026-03-24_00-55-50.json' },
   { name: 'Saint Agnes Medical Center',        file: 'www_samc_com_2026-03-23_20-53-58.json' },
